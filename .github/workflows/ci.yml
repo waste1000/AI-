@@ -1,0 +1,37 @@
+# AIC
+name: CI for AIC Project
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 示例：设置 Python，如果AIC依赖Python
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    # 安装依赖（请根据AIC实际环境调整）
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    # 示例：构建和测试AIC项目。请替换为你的实际命令！
+    - name: Build and run tests
+      run: |
+        # 假定有 aic build 和 aic test 命令
+        aic build
+        aic test
+
+    # 你可以在此添加上传构建包或发布逻辑
