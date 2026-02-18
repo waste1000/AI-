@@ -1,0 +1,72 @@
+// ==================== kernel/memory.aic ====================
+// 物理内存页管理（简化：使用位图）
+#define PAGE_SIZE 4096
+#define TOTAL_PAGES 1048576  // 4GB / 4KB
+
+agent MemoryManager : Agent {
+    uint8_t bitmap[TOTAL_PAGES/8];  // 位图，1表示占用
+    int free_pages = TOTAL_PAGES;
+    // allocation table: phys_addr -> { pid, pages }
+    map<int, int> alloc_table_pages; // key = start_page, value = pages allocated
+
+    // 分配连续页
+    int allocate_pages(int count) {
+        // 简单首次适应
+        for (int i = 0; i < TOTAL_PAGES - count; i++) {
+            bool free = true;
+            for (int j = 0; j < count; j++) {
+                int idx = i + j;
+                if (bitmap[idx/8] & (1 << (idx%8))) {
+                    free = false;
+                    break;
+                }
+            }
+            if (free) {
+                for (int j = 0; j < count; j++) {
+                    int idx = i + j;
+                    bitmap[idx/8] |= (1 << (idx%8));
+                }
+                free_pages -= count;
+                int addr = i * PAGE_SIZE;
+                alloc_table_pages[i] = count;
+                return addr; // 返回物理地址
+            }
+        }
+        return -1; // 分配失败
+    }
+
+    void free_pages(int addr, int count) {
+        int page = addr / PAGE_SIZE;
+        for (int j = 0; j < count; j++) {
+            int idx = page + j;
+            bitmap[idx/8] &= ~(1 << (idx%8));
+        }
+        free_pages += count;
+        alloc_table_pages.erase(page);
+    }
+
+    // 为进程分配虚拟内存（简化：直接使用物理地址，无分页）
+    int allocate(int pid, int size) {
+        int pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+        int addr = allocate_pages(pages);
+        return addr;
+    }
+
+    void free(int start) {
+        int page = start / PAGE_SIZE;
+        if (!alloc_table_pages.contains(page)) return;
+        int pages = alloc_table_pages[page];
+        free_pages(start, pages);
+    }
+
+    override void handle(Message msg) {
+        if (msg.method == "allocate") {
+            struct { int pid; int size; }* args = msg.args;
+            int addr = allocate(args.pid, args.size);
+            kernel.send(msg.sender_id, "allocate_reply", &addr, sizeof(addr));
+        } else if (msg.method == "free") {
+            int* addr = msg.args;
+            free(*addr);
+        }
+    }
+}
