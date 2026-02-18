@@ -1,0 +1,99 @@
+// ==================== kernel/core.aic ====================
+// 消息结构体
+struct Message {
+    int sender_id;
+    int target_id;
+    string method;
+    void* args;
+    int args_size;
+    int priority;   // 0-255, 越低优先级越高
+};
+
+// 智能体基类
+agent Agent {
+    int id;
+    string name;
+    queue<Message> inbox;  // 消息队列
+    int priority;          // 默认优先级
+
+    // 发送异步消息
+    void send(int target, string method, void* args, int size, int prio=128) {
+        Message msg;
+        msg.sender_id = this.id;
+        msg.target_id = target;
+        msg.method = method;
+        msg.args = args;
+        msg.args_size = size;
+        msg.priority = prio;
+        // 调用内核消息通道
+        Kernel.message_channel<-post(msg);
+    }
+
+    // 接收消息（阻塞，直到有消息）
+    Message receive() {
+        while (inbox.empty()) {
+            yield(); // 让出CPU
+        }
+        return inbox.pop();
+    }
+
+    // 处理消息的虚函数，子类重写
+    virtual void handle(Message msg) { }
+};
+
+// 内核主智能体（单例）
+agent Kernel {
+    int next_agent_id = 1;
+    map<int, Agent@> agents;  // 智能体引用表
+    queue<Message> global_msg_queue;  // 全局消息队列，按优先级排序
+
+    // 注册新智能体
+    int register_agent(Agent@ ag) {
+        ag.id = next_agent_id++;
+        agents[ag.id] = ag;
+        return ag.id;
+    }
+
+    // 消息通道：接收消息并入队（按优先级）
+    void post(Message msg) {
+        // 插入到合适位置（简化：直接入队，调度时排序）
+        global_msg_queue.push(msg);
+    }
+
+    // 调度器主循环
+    void run() {
+        while (true) {
+            // 按优先级处理消息（实际需更复杂调度）
+            if (!global_msg_queue.empty()) {
+                Message msg = global_msg_queue.pop();
+                Agent@ target = agents[msg.target_id];
+                if (target != null) {
+                    target.inbox.push(msg);
+                }
+            }
+            // 让每个智能体有机会处理消息（轮转）
+            foreach (ag in agents) {
+                ag.handle_pending(); // 调用每个智能体的消息处理
+            }
+            // 简单的 idle 避免 CPU 忙等
+            asm("hlt");
+        }
+    }
+
+    // 系统调用接口（同步消息）
+    void* syscall(int target, string method, void* args, int size) {
+        // 发送同步消息并等待回复（简化：使用同步原语）
+        Message msg;
+        msg.sender_id = this.id;
+        msg.target_id = target;
+        msg.method = method;
+        msg.args = args;
+        msg.args_size = size;
+        this.post(msg);
+        // 等待回复...
+        // 此处省略信号量实现
+    }
+}
+
+// 全局内核实例
+Kernel kernel = new Kernel();
