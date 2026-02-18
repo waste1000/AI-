@@ -1,0 +1,77 @@
+// ==================== kernel/process.aic ====================
+// 进程控制块
+struct PCB {
+    int pid;
+    string name;
+    int state; // 0=ready, 1=running, 2=waiting, 3=zombie
+    Agent@ thread;  // 每个进程对应一个智能体线程（这里简化）
+    int priority;
+    int cpu_time;
+    int memory_start;
+    int memory_size;
+};
+
+agent ProcessManager : Agent {
+    map<int, PCB> processes;
+    int next_pid = 1;
+    queue<int> ready_queue;  // 就绪队列（按优先级多级队列，简化）
+
+    // 创建新进程
+    int create_process(string name, string entry_point, int priority) {
+        PCB pcb;
+        pcb.pid = next_pid++;
+        pcb.name = name;
+        pcb.state = 0; // ready
+        pcb.priority = priority;
+        pcb.cpu_time = 0;
+        // 分配内存（调用内存管理器）
+        MemoryManager mm = kernel.get_agent("MemoryManager");
+        int mem_size = 1024*1024; // 1MB
+        int mem_start = mm.allocate(pcb.pid, mem_size);
+        pcb.memory_start = mem_start;
+        pcb.memory_size = mem_size;
+        // 创建执行线程（智能体）
+        // 假设 entry_point 是一个智能体类型的名称，创建实例并运行
+        Agent@ thread = create_agent(entry_point);
+        thread.priority = priority;
+        kernel.register_agent(thread);
+        pcb.thread = thread;
+        processes[pcb.pid] = pcb;
+        ready_queue.push(pcb.pid);
+        return pcb.pid;
+    }
+
+    // 调度（由内核时钟中断触发）
+    void schedule() {
+        if (ready_queue.empty()) return;
+        int next_pid = ready_queue.front(); ready_queue.pop();
+        PCB& pcb = processes[next_pid];
+        pcb.state = 1; // running
+        // 切换上下文（实际需保存恢复寄存器，这里简化）
+        // 发送消息给当前运行的进程让其暂停，然后启动新进程
+        // 此处省略上下文切换细节
+    }
+
+    // 进程退出
+    void exit(int pid) {
+        PCB& pcb = processes[pid];
+        pcb.state = 3; // zombie
+        // 释放内存
+        MemoryManager mm = kernel.get_agent("MemoryManager");
+        mm.free(pcb.memory_start);
+        // 通知父进程
+        // ...
+    }
+
+    override void handle(Message msg) {
+        if (msg.method == "create") {
+            // 解析参数
+            string name = (string)msg.args;
+            int pid = create_process(name, "UserApp", 128);
+            kernel.send(msg.sender_id, "create_reply", &pid, sizeof(pid));
+        } else if (msg.method == "exit") {
+            int pid = *(int*)msg.args;
+            exit(pid);
+        }
+    }
+}
